@@ -1,0 +1,41 @@
+name: Studio Monitor tests
+
+
+on:
+  push:
+    paths:
+      - ".github/workflows/studio-monitor-tests.yml"
+      - "desktop/oliyugam-studio-monitor/**"
+  pull_request:
+    paths:
+      - ".github/workflows/studio-monitor-tests.yml"
+      - "desktop/oliyugam-studio-monitor/**"
+
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+
+    defaults:
+      run:
+        working-directory: desktop/oliyugam-studio-monitor
+
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: desktop/oliyugam-studio-monitor/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
