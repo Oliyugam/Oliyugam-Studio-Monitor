@@ -1,0 +1,23 @@
+appId: com.oliyugam.studio-monitor
+productName: Oliyugam Studio Monitor
+artifactName: Oliyugam-Studio-Monitor-Setup.${ext}
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+asar: true
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**/*"
+forceCodeSigning: false
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
