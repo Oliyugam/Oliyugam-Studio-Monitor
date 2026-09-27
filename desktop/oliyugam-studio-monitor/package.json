@@ -1,0 +1,45 @@
+{
+  "name": "oliyugam-studio-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows-first Electron foundation for Oliyugam Studio Monitor",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "dev": "concurrently --kill-others \"pnpm run dev:renderer\" \"pnpm run dev:main\" \"pnpm run launch:dev\"",
+    "postinstall": "electron-builder install-app-deps",
+    "dev:renderer": "vite --config config/vite.config.ts",
+    "dev:main": "tsup --config config/tsup.config.ts --watch",
+    "launch:dev": "wait-on tcp:127.0.0.1:5173 dist/main.cjs dist/preload.cjs && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.renderer.json",
+    "build": "pnpm run clean && pnpm run typecheck && pnpm run build:main && pnpm run build:renderer",
+    "build:main": "tsup --config config/tsup.config.ts",
+    "build:renderer": "vite build --config config/vite.config.ts",
+    "dist:win": "pnpm run build && electron-builder --win nsis --config config/electron-builder.yml",
+    "test": "node scripts/run-tests.mjs",
+    "clean": "rimraf dist release"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.2.0",
+    "cross-env": "^10.0.0",
+    "electron": "^44.4.1",
+    "electron-builder": "^26.15.3",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.5.0",
+    "tsx": "^4.23.13",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.2",
+    "wait-on": "^8.0.4",
+    "@types/better-sqlite3": "^7.6.13"
+  }
+}
