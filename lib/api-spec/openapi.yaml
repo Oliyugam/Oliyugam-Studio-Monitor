@@ -1,0 +1,929 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 1.0.0
+  summary: Approved Studio Monitor connection contract
+  description: |
+    Approved wire contract for Studio Monitor's connection to Studio OS. This
+    specification defines the allowed sign-in, enrollment, heartbeat, sync,
+    revocation, and remote-configuration behavior. It does not assert that a
+    Studio OS server or a production HTTP adapter is deployed or enabled.
+
+    ## Authentication and credentials
+    Employee sign-in uses organization-issued employee credentials over TLS.
+    The employee identifier format and password policy are owned by Studio OS;
+    the client must not infer an employee identity from a display name. Employee
+    session credentials and device credentials are separate, scoped, opaque
+    bearer credentials. Enrollment returns a device credential pair. Refresh
+    tokens rotate on every successful refresh; a refresh token may be used once.
+    Access-token lifetime is returned by the server and must not be guessed.
+    Credentials are main-process-only and must be encrypted with the operating
+    system credential store. They must never be exposed to the renderer, logged,
+    or stored in plaintext.
+
+    A successful employee sign-out revokes that employee session. A successful
+    device sign-out or employee-initiated device revocation immediately
+    invalidates the device's access and refresh credentials; repeated
+    revocation is idempotent. On offline sign-out, the app must stop monitoring
+    and delete local credentials immediately, keep unacknowledged events only
+    in the bounded local queue, and show that remote revocation could not be
+    confirmed. It must not send queued data without a newly authorized device
+    credential. The organization can revoke an offline device from Studio OS.
+
+    ## Retry and acknowledgement rules
+    - Invalid input (400/422) is not retried unchanged. A rejected sync batch is
+      atomic: no event is acknowledged or accepted, and validation failures
+      remain in the local database for review.
+    - A sign-in 401 is a credential failure, not a transient error; do not
+      automatically repeat it. A 401 on an authenticated operation permits one
+      credential refresh and one replay. If refresh fails, clear the affected
+      credentials, pause authenticated operations, and require sign-in or
+      enrollment again. Never discard queued events because authentication
+      failed.
+    - A 403 indicates a disabled, revoked, or unauthorized account/device.
+      Stop authenticated operations and require recovery; do not retry with the
+      same credentials.
+    - On 429, honor `Retry-After` (seconds or HTTP date). If absent, use the
+      client's bounded exponential backoff. `Retry-After` takes precedence over
+      the normal 15-minute backoff cap. Do not retry sooner than 30 seconds for
+      sync batches.
+    - Network errors and 5xx responses are transient. Sync retries use
+      exponential backoff with 0.75–1.25 jitter, starting at 1 second, capped
+      at 15 minutes, and stop automatic retries after 12 attempts. Exhausted
+      or rejected events remain on disk as failed records; they are never
+      silently deleted. Heartbeat and configuration operations retry at their
+      next scheduled interval.
+    - Sync events are deduplicated by `(deviceId, clientEventId)`. A successful
+      response acknowledges every submitted event ID, including IDs already
+      accepted earlier. The client may mark an event synced only after its ID
+      appears in that response.
+
+    ## Data and privacy boundary
+    The server may receive only the employee identity needed for sign-in,
+    device metadata, heartbeat status, and the app's existing attendance,
+    active/idle aggregate, executable-name usage aggregate, and basic system
+    metric events. It must not request or accept screenshots, window titles,
+    keystrokes, typed content, messages, URLs, file/document paths, command-line
+    arguments, webcam or microphone data, or credentials in telemetry.
+    Application usage identifies only the normalized executable basename and
+    its local category. Local monitoring remains off until the user explicitly
+    opts in; the server cannot enable monitoring or expand collected data.
+    Remote settings are restricted to the bounded operational intervals and
+    batch/queue limits below; they cannot change the API origin, privacy scope,
+    consent state, local retention policy, or credential policy.
+    A lower remote queue limit may stop new events from being queued when the
+    bounded local queue is full, but must never evict or delete existing
+    unacknowledged records to make room.
+  x-contract-status: approved
+servers:
+  - url: /api
+    description: Studio OS API base path; production origin is deployment-specific
+tags:
+  - name: health
+    description: Health operations
+  - name: employee-auth
+    description: Employee sessions and credential lifecycle
+  - name: devices
+    description: Device enrollment and revocation
+  - name: monitoring
+    description: Heartbeats, event synchronization, and bounded configuration
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status.
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /v1/employee-sessions:
+    post:
+      operationId: createEmployeeSession
+      tags: [employee-auth]
+      summary: Sign in an employee
+      description: |
+        Validates organization-issued credentials. The identifier and password
+        are accepted only over TLS; passwords are never returned or retained by
+        Studio Monitor. A generic 401 response must not reveal whether an
+        employee identifier exists.
+      x-retry-policy:
+        invalidCredentials: Do not retry automatically; show a generic sign-in error.
+        rateLimit: Honor Retry-After; require an explicit user retry.
+        networkOrServerFailure: Show a retry action; do not repeat the sign-in request automatically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmployeeSignInRequest"
+      responses:
+        "200":
+          description: Employee session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmployeeSession"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/employee-sessions/refresh:
+    post:
+      operationId: refreshEmployeeSession
+      tags: [employee-auth]
+      summary: Rotate employee session credentials
+      description: A refresh token is single-use. The previous refresh token is invalid after success. Reuse the same Idempotency-Key to safely recover a rotated response after a network interruption.
+      x-retry-policy:
+        unauthorized: Do not retry with the same refresh token; clear employee credentials and require sign-in.
+        networkOrServerFailure: Retry only with the same Idempotency-Key; never reuse a token after a successful rotation.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Employee credentials rotated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCredentials"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/employee-sessions/current:
+    delete:
+      operationId: revokeCurrentEmployeeSession
+      tags: [employee-auth]
+      summary: Sign out the current employee session
+      description: Revokes the employee refresh credential. Repeated revocation is successful and has no additional effect.
+      security:
+        - employeeBearer: []
+      responses:
+        "204":
+          description: Session revoked or already revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/devices:
+    post:
+      operationId: enrollDevice
+      tags: [devices]
+      summary: Enroll this installation
+      description: |
+        Requires an authenticated employee. The client-generated UUID is a
+        random installation identifier, not a hardware fingerprint. Repeating
+        an enrollment with the same Idempotency-Key returns the original
+        enrollment and credentials rather than creating a second device.
+      security:
+        - employeeBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceEnrollmentRequest"
+      responses:
+        "201":
+          description: Device enrolled and distinct device credentials issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceEnrollment"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailure"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/device-sessions/refresh:
+    post:
+      operationId: refreshDeviceSession
+      tags: [devices]
+      summary: Rotate device credentials
+      description: Device refresh credentials are scoped to one enrolled device and rotate on success. Reuse the same Idempotency-Key to safely recover a rotated response after a network interruption.
+      x-retry-policy:
+        unauthorized: Do not retry with the same refresh token; clear device credentials and require re-enrollment.
+        networkOrServerFailure: Retry only with the same Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Device credentials rotated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionCredentials"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/devices/current:
+    delete:
+      operationId: signOutCurrentDevice
+      tags: [devices]
+      summary: Revoke and sign out this device
+      description: |
+        Immediately revokes this device's access and refresh credentials.
+        Studio Monitor must stop monitoring and remove local credentials on
+        sign-out even if this request cannot be sent. An offline result is not
+        a confirmed server-side revocation.
+      security:
+        - deviceBearer: []
+      responses:
+        "204":
+          description: Device revoked or already revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/devices/{deviceId}:
+    delete:
+      operationId: revokeDevice
+      tags: [devices]
+      summary: Revoke a device
+      description: |
+        Revokes the named device's access and refresh credentials immediately.
+        The authenticated employee must be authorized to manage that device.
+        Repeated revocation is successful and has no additional effect.
+      security:
+        - employeeBearer: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceId"
+      responses:
+        "204":
+          description: Device revoked or already revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/devices/current/heartbeats:
+    post:
+      operationId: sendHeartbeat
+      tags: [monitoring]
+      summary: Record a device heartbeat
+      description: A heartbeat contains only device identity, agent version, timestamp, and connection state.
+      security:
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Heartbeat"
+      responses:
+        "204":
+          description: Heartbeat accepted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailure"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/devices/current/sync-batches:
+    post:
+      operationId: syncEvents
+      tags: [monitoring]
+      summary: Submit a batch of locally queued events
+      description: |
+        The request is atomic: on success all submitted event IDs are
+        acknowledged; on validation failure none are accepted. The server
+        deduplicates by device and clientEventId, so retrying an uncertain
+        response cannot create a duplicate. Local SQLite IDs, retry counters,
+        queue state, and attempt timestamps are never sent.
+      security:
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncBatchRequest"
+      x-retry-policy:
+        validation: Do not retry unchanged; keep the rejected records locally for review.
+        authentication: Refresh once, replay once; on failure pause sync and retain queued records.
+        forbidden: Pause sync and retain queued records until device recovery.
+        rateLimit: Honor Retry-After, with a 30-second minimum and bounded client backoff.
+        networkOrServerFailure: Exponential backoff with jitter, 15-minute cap, 12-attempt automatic limit; retain exhausted records locally.
+      responses:
+        "200":
+          description: Every submitted event ID was accepted or had already been accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncBatchAcknowledgement"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          description: Batch exceeds the server's request-size limit; client must split the batch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "422":
+          $ref: "#/components/responses/ValidationFailure"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+  /v1/devices/current/configuration:
+    get:
+      operationId: getDeviceConfiguration
+      tags: [monitoring]
+      summary: Get bounded operational settings
+      description: |
+        Returns only the allowlisted intervals and limits. The client validates
+        every value against its local schema before applying it. Invalid,
+        unavailable, or unauthenticated remote settings never disable local
+        privacy controls or replace the last known valid local settings.
+      security:
+        - deviceBearer: []
+      responses:
+        "200":
+          description: Current operational settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteConfigurationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/ServerFailure"
+components:
+  securitySchemes:
+    employeeBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Short-lived employee access credential; never a device credential.
+    deviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Revocable credential scoped to one enrolled device.
+  parameters:
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      description: Random UUID created by the client for this installation.
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Random UUID reused unchanged when retrying the same enrollment request.
+      schema:
+        type: string
+        format: uuid
+  responses:
+    InvalidRequest:
+      description: Request is malformed or violates the API-level request schema.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Unauthorized:
+      description: Credentials are absent, invalid, expired, or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Forbidden:
+      description: The account or device is disabled, revoked, or lacks permission.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    NotFound:
+      description: The requested device does not exist or is not visible to this employee.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Conflict:
+      description: The enrollment identity conflicts with an existing resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    ValidationFailure:
+      description: Payload or event validation failed; the complete sync batch is rejected.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    TooManyRequests:
+      description: Rate limit exceeded; client must honor Retry-After.
+      headers:
+        Retry-After:
+          description: Seconds to wait, or an HTTP date after which a retry is allowed.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    ServerFailure:
+      description: Unexpected server failure. A 5xx response is transient unless stated otherwise.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+  schemas:
+    HealthStatus:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+      required: [status]
+    EmployeeSignInRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        employeeIdentifier:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Organization-issued identifier; format is owned by Studio OS.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 1024
+      required: [employeeIdentifier, password]
+    EmployeeSession:
+      type: object
+      additionalProperties: false
+      properties:
+        employee:
+          $ref: "#/components/schemas/Employee"
+        credentials:
+          $ref: "#/components/schemas/SessionCredentials"
+      required: [employee, credentials]
+    Employee:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 256
+      required: [id, displayName]
+    SessionCredentials:
+      type: object
+      additionalProperties: false
+      properties:
+        tokenType:
+          type: string
+          const: Bearer
+        accessToken:
+          type: string
+          writeOnly: true
+          minLength: 1
+        refreshToken:
+          type: string
+          writeOnly: true
+          minLength: 1
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+      required: [tokenType, accessToken, refreshToken, accessTokenExpiresAt]
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        refreshToken:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required: [refreshToken]
+    DeviceEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Random installation UUID; not derived from hardware.
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 128
+        platform:
+          type: string
+          const: win32
+        operatingSystem:
+          type: string
+          minLength: 1
+          maxLength: 128
+        agentVersion:
+          type: string
+          minLength: 1
+          maxLength: 64
+      required: [id, displayName, platform, operatingSystem, agentVersion]
+    DeviceEnrollment:
+      type: object
+      additionalProperties: false
+      properties:
+        device:
+          $ref: "#/components/schemas/Device"
+        credentials:
+          $ref: "#/components/schemas/SessionCredentials"
+      required: [device, credentials]
+    Device:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 128
+        platform:
+          type: string
+          const: win32
+        operatingSystem:
+          type: string
+          minLength: 1
+          maxLength: 128
+        agentVersion:
+          type: string
+          minLength: 1
+          maxLength: 64
+        enrollmentState:
+          type: string
+          const: enrolled
+        createdAt:
+          type: string
+          format: date-time
+        lastSuccessfulSync:
+          type: [string, "null"]
+          format: date-time
+        lastHeartbeat:
+          type: [string, "null"]
+          format: date-time
+      required:
+        - id
+        - displayName
+        - platform
+        - operatingSystem
+        - agentVersion
+        - enrollmentState
+        - createdAt
+        - lastSuccessfulSync
+        - lastHeartbeat
+    Heartbeat:
+      type: object
+      additionalProperties: false
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        agentVersion:
+          type: string
+          minLength: 1
+          maxLength: 64
+        occurredAt:
+          type: string
+          format: date-time
+        connectionState:
+          type: string
+          enum: [online, offline]
+      required: [deviceId, agentVersion, occurredAt, connectionState]
+    SyncBatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 250
+          items:
+            $ref: "#/components/schemas/SyncEvent"
+      required: [events]
+    SyncEvent:
+      oneOf:
+        - $ref: "#/components/schemas/AttendanceSyncEvent"
+        - $ref: "#/components/schemas/ActivitySyncEvent"
+        - $ref: "#/components/schemas/AppUsageSyncEvent"
+        - $ref: "#/components/schemas/SystemMetricsSyncEvent"
+      discriminator:
+        propertyName: eventType
+    AttendanceSyncEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        clientEventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          const: attendance
+        timestamp:
+          type: string
+          format: date-time
+        payload:
+          $ref: "#/components/schemas/AttendancePayload"
+      required: [clientEventId, eventType, timestamp, payload]
+    AttendancePayload:
+      type: object
+      additionalProperties: false
+      properties:
+        occurredAt:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum: [clock-in, clock-out, break-start, break-end]
+      required: [occurredAt, kind]
+    ActivitySyncEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        clientEventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          const: activity
+        timestamp:
+          type: string
+          format: date-time
+        payload:
+          $ref: "#/components/schemas/ActivityPayload"
+      required: [clientEventId, eventType, timestamp, payload]
+    ActivityPayload:
+      type: object
+      additionalProperties: false
+      properties:
+        occurredAt:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [active, idle]
+        durationSeconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+      required: [occurredAt, state, durationSeconds]
+    AppUsageSyncEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        clientEventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          const: app-usage
+        timestamp:
+          type: string
+          format: date-time
+        payload:
+          $ref: "#/components/schemas/AppUsagePayload"
+      required: [clientEventId, eventType, timestamp, payload]
+    AppUsagePayload:
+      type: object
+      additionalProperties: false
+      properties:
+        applicationId:
+          type: string
+          pattern: "^[a-zA-Z0-9_.-]{1,128}$"
+          description: Normalized executable basename only; no path or command-line arguments.
+        category:
+          type: string
+          enum: [CREATIVE, PRODUCTIVITY, COMMUNICATION, SYSTEM, OTHER]
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        durationSeconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+      required: [applicationId, category, startedAt, endedAt, durationSeconds]
+    SystemMetricsSyncEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        clientEventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          const: system-metrics
+        timestamp:
+          type: string
+          format: date-time
+        payload:
+          $ref: "#/components/schemas/SystemMetricsPayload"
+      required: [clientEventId, eventType, timestamp, payload]
+    SystemMetricsPayload:
+      type: object
+      additionalProperties: false
+      properties:
+        sampledAt:
+          type: string
+          format: date-time
+        cpuPercent:
+          type: number
+          minimum: 0
+          maximum: 100
+        memoryPercent:
+          type: number
+          minimum: 0
+          maximum: 100
+        diskPercent:
+          type: number
+          minimum: 0
+          maximum: 100
+        networkAvailable:
+          type: boolean
+      required:
+        [sampledAt, cpuPercent, memoryPercent, diskPercent, networkAvailable]
+    SyncBatchAcknowledgement:
+      type: object
+      additionalProperties: false
+      properties:
+        acknowledgedClientEventIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+          description: Must contain every submitted ID when the batch succeeds.
+      required: [acknowledgedClientEventIds]
+    RemoteConfigurationResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          type: string
+          minLength: 1
+          maxLength: 128
+        updatedAt:
+          type: string
+          format: date-time
+        configuration:
+          $ref: "#/components/schemas/RemoteConfiguration"
+      required: [revision, updatedAt, configuration]
+    RemoteConfiguration:
+      type: object
+      additionalProperties: false
+      properties:
+        heartbeatIntervalMs:
+          type: integer
+          minimum: 10000
+          maximum: 300000
+        activitySampleIntervalMs:
+          type: integer
+          minimum: 5000
+          maximum: 60000
+        activityAggregationIntervalMs:
+          type: integer
+          minimum: 60000
+          maximum: 3600000
+        idleThresholdMs:
+          type: integer
+          minimum: 60000
+          maximum: 3600000
+        systemMetricIntervalMs:
+          type: integer
+          minimum: 30000
+          maximum: 900000
+        syncIntervalMs:
+          type: integer
+          minimum: 10000
+          maximum: 600000
+        offlineQueueLimit:
+          type: integer
+          minimum: 100
+          maximum: 100000
+        syncBatchSize:
+          type: integer
+          minimum: 10
+          maximum: 250
+      required:
+        - heartbeatIntervalMs
+        - activitySampleIntervalMs
+        - activityAggregationIntervalMs
+        - idleThresholdMs
+        - systemMetricIntervalMs
+        - syncIntervalMs
+        - offlineQueueLimit
+        - syncBatchSize
+    ApiError:
+      type: object
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_REQUEST
+                - AUTHENTICATION_REQUIRED
+                - DEVICE_REVOKED
+                - FORBIDDEN
+                - NOT_FOUND
+                - CONFLICT
+                - VALIDATION_ERROR
+                - RATE_LIMITED
+                - SERVER_ERROR
+                - SERVICE_UNAVAILABLE
+            message:
+              type: string
+              maxLength: 512
+            requestId:
+              type: string
+              maxLength: 128
+            details:
+              type: array
+              items:
+                $ref: "#/components/schemas/ValidationDetail"
+          required: [code, message, requestId]
+      required: [error]
+    ValidationDetail:
+      type: object
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+          maxLength: 256
+        code:
+          type: string
+          maxLength: 64
+      required: [field, code]
