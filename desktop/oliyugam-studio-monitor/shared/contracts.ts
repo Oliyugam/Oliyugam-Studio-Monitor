@@ -63,6 +63,11 @@ export interface SoftwareWorkState {
   observedAt: string;
 }
 
+export interface ConnectorEnrollment {
+  endpoint: string;
+  token: string;
+}
+
 export interface SystemMetrics {
   sampledAt: string;
   cpuPercent: number;
@@ -122,6 +127,8 @@ export interface FoundationSnapshot {
   attendanceState: AttendanceState;
   currentApplication: string | null;
   selectedApplications: readonly SelectedApplication[];
+  softwareWorkStates: readonly SoftwareWorkState[];
+  connectorEnrollment: ConnectorEnrollment;
   metrics: SystemMetrics | null;
   pendingSyncCount: number;
   failedSyncCount: number;

@@ -422,6 +422,8 @@ function Dashboard({
 
         <SelectedApplicationsPanel
           applications={snapshot.selectedApplications}
+          workStates={snapshot.softwareWorkStates}
+          connectorEnrollment={snapshot.connectorEnrollment}
           pending={pending}
           onChange={onSelectedApplications}
         />
@@ -629,16 +631,32 @@ function formatDateTime(value: string | null) {
 
 function SelectedApplicationsPanel({
   applications,
+  workStates,
+  connectorEnrollment,
   pending,
   onChange,
 }: {
   applications: readonly SelectedApplication[];
+  workStates: FoundationSnapshot["softwareWorkStates"];
+  connectorEnrollment: FoundationSnapshot["connectorEnrollment"];
   pending: boolean;
   onChange: (applications: readonly SelectedApplication[]) => void;
 }) {
   const [displayName, setDisplayName] = useState("");
   const [executableName, setExecutableName] = useState("");
   const [validationError, setValidationError] = useState("");
+
+  function addAdobeApplications() {
+    const adobeApplications: SelectedApplication[] = [
+      { id: "adobe-premiere-pro", displayName: "Adobe Premiere Pro", executableName: "adobe premiere pro.exe", enabled: true, supportLevel: "basic", connectorId: null },
+      { id: "adobe-photoshop", displayName: "Adobe Photoshop", executableName: "photoshop.exe", enabled: true, supportLevel: "basic", connectorId: null },
+      { id: "adobe-indesign", displayName: "Adobe InDesign", executableName: "indesign.exe", enabled: true, supportLevel: "basic", connectorId: null },
+      { id: "adobe-lightroom", displayName: "Adobe Lightroom", executableName: "lightroom.exe", enabled: true, supportLevel: "basic", connectorId: null },
+    ];
+    onChange([...applications, ...adobeApplications.filter((candidate) => !applications.some(
+      (application) => application.id === candidate.id || application.executableName.toLowerCase() === candidate.executableName,
+    ))]);
+  }
 
   function addApplication(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -672,6 +690,7 @@ function SelectedApplicationsPanel({
         <p className="section-label">Work applications</p>
         <h2 className="panel-title" id="selected-applications-heading">Selected software</h2>
         <p className="selection-copy">Only enabled applications in this list are recorded as work-application usage. Other processes are ignored.</p>
+        <button className="text-button adobe-preset-button" type="button" disabled={pending} onClick={addAdobeApplications}>Add Adobe 2026 applications</button>
       </div>
       <form className="application-form" onSubmit={addApplication}>
         <input className="text-input" aria-label="Application display name" placeholder="Application name" value={displayName} disabled={pending} onChange={(event) => setDisplayName(event.target.value)} />
@@ -685,7 +704,7 @@ function SelectedApplicationsPanel({
             <li key={application.id}>
               <div>
                 <strong>{application.displayName}</strong>
-                <span>{application.executableName} · {application.supportLevel === "enhanced" ? "Verified integration" : "Foreground usage"}</span>
+                <span>{application.executableName} · {formatApplicationSupport(application, workStates)}</span>
               </div>
               <div className="application-actions">
                 <button className="text-button" type="button" disabled={pending} onClick={() => onChange(applications.map((item) => item.id === application.id ? { ...item, enabled: !item.enabled } : item))}>{application.enabled ? "Disable" : "Enable"}</button>
@@ -696,6 +715,21 @@ function SelectedApplicationsPanel({
         </ul>
       )}
       <p className="selection-copy">Software-specific work states, such as rendering or exporting, appear only when a verified connector is installed for that software.</p>
+      <details className="connector-setup">
+        <summary>Adobe connector setup</summary>
+        <p>Load the matching Adobe UXP connector, then enter this local endpoint and token in its panel. They only allow status reports from this device.</p>
+        <label className="field-label">Endpoint</label>
+        <input className="text-input" readOnly value={connectorEnrollment.endpoint} aria-label="Adobe connector endpoint" />
+        <label className="field-label">Connector token</label>
+        <input className="text-input" readOnly value={connectorEnrollment.token} aria-label="Adobe connector token" />
+      </details>
     </section>
   );
+}
+
+function formatApplicationSupport(application: SelectedApplication, workStates: FoundationSnapshot["softwareWorkStates"]) {
+  const state = workStates.find((item) => item.applicationId === application.id);
+  if (state) return `Adobe connector: ${state.state}`;
+  if (["adobe-premiere-pro", "adobe-photoshop", "adobe-indesign"].includes(application.id)) return "Connector source available · setup required";
+  return "Foreground usage";
 }

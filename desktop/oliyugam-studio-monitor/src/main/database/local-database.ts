@@ -11,6 +11,7 @@ import type {
   Employee,
   Heartbeat,
   SelectedApplication,
+  SoftwareWorkState,
   SyncQueueItem,
   SystemMetrics,
 } from "../../../shared/contracts.js";
@@ -115,6 +116,25 @@ export class LocalDatabase {
 
   saveSelectedApplications(applications: readonly SelectedApplication[]): void {
     this.#setConfig("selected-applications", applications);
+  }
+
+  getSoftwareWorkStates(): SoftwareWorkState[] {
+    const states = this.#getConfig<SoftwareWorkState[]>("software-work-states", []);
+    return states.filter(isSoftwareWorkState);
+  }
+
+  saveSoftwareWorkState(state: SoftwareWorkState): void {
+    const states = this.getSoftwareWorkStates();
+    const next = [...states.filter((item) => item.applicationId !== state.applicationId), state];
+    this.#setConfig("software-work-states", next);
+  }
+
+  getOrCreateConnectorToken(): string {
+    const existing = this.#getConfig<string | null>("connector-token", null);
+    if (existing && /^[a-f0-9-]{36}$/iu.test(existing)) return existing;
+    const token = randomUUID();
+    this.#setConfig("connector-token", token);
+    return token;
   }
 
   saveEncryptedCredential(key: string, ciphertextBase64: string): void {
@@ -496,4 +516,12 @@ function isSelectedApplication(value: unknown): value is SelectedApplication {
     && typeof application.enabled === "boolean"
     && (application.supportLevel === "basic" || application.supportLevel === "enhanced")
     && (typeof application.connectorId === "string" || application.connectorId === null);
+}
+
+function isSoftwareWorkState(value: unknown): value is SoftwareWorkState {
+  if (!value || typeof value !== "object") return false;
+  const state = value as Partial<SoftwareWorkState>;
+  return typeof state.applicationId === "string"
+    && ["idle", "working", "rendering", "exporting", "unavailable"].includes(state.state ?? "")
+    && typeof state.observedAt === "string";
 }

@@ -16,6 +16,7 @@ import { AgentServiceHost } from "./agent-service-host.js";
 import { AttendanceService, type AttendanceAction } from "../services/attendance-service.js";
 import { ValidationError } from "../services/agent-errors.js";
 import { DeviceSetupService } from "../services/device-setup-service.js";
+import { AdobeConnectorBridge } from "../integrations/adobe-connector-bridge.js";
 import { NetworkManager } from "../system/network-manager.js";
 import { SyncManager } from "../sync/sync-manager.js";
 
@@ -27,6 +28,7 @@ export class AppRuntime {
   readonly #attendanceService: AttendanceService;
   readonly #monitoring: MonitoringManager;
   readonly #serviceHost: AgentServiceHost;
+  readonly #adobeConnectorBridge: AdobeConnectorBridge;
   readonly #apiState: ApiState;
   readonly #onStatusChanged: () => void;
 
@@ -99,15 +101,33 @@ export class AppRuntime {
     this.#serviceHost = new AgentServiceHost([this.#monitoring]);
     this.#setupService = new DeviceSetupService(this.#database, this.#api, this.#logger, app.getVersion());
     this.#attendanceService = new AttendanceService(this.#database, this.#logger);
+    this.#adobeConnectorBridge = new AdobeConnectorBridge(
+      this.#database.getOrCreateConnectorToken(),
+      (state) => {
+        const application = this.#database.getSelectedApplications().find(
+          (item) => item.id === state.applicationId && item.enabled,
+        );
+        if (!application) return false;
+        this.#database.saveSoftwareWorkState(state);
+        this.#onStatusChanged();
+        return true;
+      },
+    );
   }
 
   async start(): Promise<void> {
     await this.#serviceHost.start();
+    try {
+      await this.#adobeConnectorBridge.start();
+    } catch {
+      this.#logger.warn("ADOBE_CONNECTOR_BRIDGE_UNAVAILABLE");
+    }
     this.#logger.info("APP_STARTED");
   }
 
   async stop(): Promise<void> {
     await this.#serviceHost.stop();
+    await this.#adobeConnectorBridge.stop();
     this.#logger.info("APP_STOPPED");
     await this.#logger.flush();
     this.#database.close();
@@ -127,6 +147,11 @@ export class AppRuntime {
       attendanceState,
       currentApplication: this.#database.getCurrentApplication(),
       selectedApplications: this.#database.getSelectedApplications(),
+      softwareWorkStates: this.#database.getSoftwareWorkStates(),
+      connectorEnrollment: {
+        endpoint: "http://127.0.0.1:17464/v1/adobe-work-state",
+        token: this.#database.getOrCreateConnectorToken(),
+      },
       metrics: this.#database.getLatestSystemMetrics(),
       pendingSyncCount: this.#database.getPendingCount(),
       failedSyncCount: this.#database.getFailedCount(),
