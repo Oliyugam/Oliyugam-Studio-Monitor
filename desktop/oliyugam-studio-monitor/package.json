@@ -1,6 +1,6 @@
 {
   "name": "oliyugam-studio-monitor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Windows-first Electron foundation for Oliyugam Studio Monitor",
   "type": "module",
