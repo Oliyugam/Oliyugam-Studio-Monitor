@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AttendanceAction, FoundationSnapshot, MonitoringStatusListener } from "../../shared/contracts.js";
+import type { AttendanceAction, FoundationSnapshot, MonitoringStatusListener, SelectedApplication } from "../../shared/contracts.js";
 
 const bridge = Object.freeze({
   getFoundationSnapshot: (): Promise<FoundationSnapshot> =>
@@ -12,6 +12,8 @@ const bridge = Object.freeze({
     ipcRenderer.invoke("monitoring:set-enabled", enabled) as Promise<FoundationSnapshot>,
   setAutoStartEnabled: (enabled: boolean): Promise<FoundationSnapshot> =>
     ipcRenderer.invoke("settings:set-auto-start", enabled) as Promise<FoundationSnapshot>,
+  setSelectedApplications: (applications: readonly SelectedApplication[]): Promise<FoundationSnapshot> =>
+    ipcRenderer.invoke("settings:set-selected-applications", applications) as Promise<FoundationSnapshot>,
   signOut: (): Promise<FoundationSnapshot> =>
     ipcRenderer.invoke("agent:sign-out") as Promise<FoundationSnapshot>,
   onStatusChanged: (listener: MonitoringStatusListener): (() => void) => {

@@ -71,3 +71,27 @@ test("attendance state is reset when its saved date is not today", () => {
     database.close();
   }
 });
+
+test("selected applications persist locally and reject malformed saved values", () => {
+  const database = new LocalDatabase("", { inMemory: true });
+  try {
+    database.saveSelectedApplications([{
+      id: "blender",
+      displayName: "Blender",
+      executableName: "blender.exe",
+      enabled: true,
+      supportLevel: "basic",
+      connectorId: null,
+    }]);
+    assert.deepEqual(database.getSelectedApplications(), [{
+      id: "blender",
+      displayName: "Blender",
+      executableName: "blender.exe",
+      enabled: true,
+      supportLevel: "basic",
+      connectorId: null,
+    }]);
+  } finally {
+    database.close();
+  }
+});

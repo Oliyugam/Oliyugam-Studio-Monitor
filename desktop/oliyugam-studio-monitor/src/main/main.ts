@@ -19,6 +19,14 @@ const setupInputSchema = z.object({
 });
 const attendanceInputSchema = z.enum(["clock-in", "clock-out", "break-start", "break-end"]);
 const booleanInputSchema = z.boolean();
+const selectedApplicationSchema = z.object({
+  id: z.string().regex(/^[a-z0-9][a-z0-9.-]{0,127}$/),
+  displayName: z.string().trim().min(1).max(128),
+  executableName: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}\.exe$/i),
+  enabled: z.boolean(),
+  supportLevel: z.enum(["basic", "enhanced"]),
+  connectorId: z.string().trim().min(1).max(128).nullable(),
+});
 
 let runtime: AppRuntime | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -54,6 +62,17 @@ if (!gotSingleInstanceLock) {
     const parsed = booleanInputSchema.safeParse(input);
     if (!parsed.success) throw new Error("Startup setting is invalid.");
     return requireRuntime().setAutoStartEnabled(parsed.data);
+  });
+  ipcMain.handle("settings:set-selected-applications", (_event, input: unknown) => {
+    const parsed = z.array(selectedApplicationSchema).max(100).safeParse(input);
+    if (!parsed.success) throw new Error("The selected applications setting is invalid.");
+    if (new Set(parsed.data.map((application) => application.id)).size !== parsed.data.length) {
+      throw new Error("Each selected application must be unique.");
+    }
+    if (parsed.data.some((application) => application.supportLevel !== "basic" || application.connectorId !== null)) {
+      throw new Error("No verified software-specific connectors are installed in this build.");
+    }
+    return requireRuntime().setSelectedApplications(parsed.data);
   });
   ipcMain.handle("agent:sign-out", () => requireRuntime().signOut());
 

@@ -5,6 +5,7 @@ import type {
   AttendanceState,
   FoundationSnapshot,
   MonitoringState,
+  SelectedApplication,
 } from "../../../shared/contracts.js";
 import { MockStudioMonitorApi } from "../api/mock-studio-monitor-api.js";
 import { RealStudioOSApiClient } from "../api/real-studio-os-api-client.js";
@@ -90,7 +91,9 @@ export class AppRuntime {
       syncManager,
       getDevice: () => this.#database.getDevice(),
       isMonitoringEnabled: () =>
-        this.#database.getMonitoringEnabled() && this.#database.getEmployee() !== null,
+        this.#database.getMonitoringEnabled()
+        && this.#database.getEmployee() !== null
+        && this.#attendanceService.getState() === "working",
       onStatusChanged,
     });
     this.#serviceHost = new AgentServiceHost([this.#monitoring]);
@@ -123,6 +126,7 @@ export class AppRuntime {
       monitoringState,
       attendanceState,
       currentApplication: this.#database.getCurrentApplication(),
+      selectedApplications: this.#database.getSelectedApplications(),
       metrics: this.#database.getLatestSystemMetrics(),
       pendingSyncCount: this.#database.getPendingCount(),
       failedSyncCount: this.#database.getFailedCount(),
@@ -133,13 +137,17 @@ export class AppRuntime {
 
   async completeSetup(displayName: string): Promise<FoundationSnapshot> {
     await this.#setupService.completeSetup(displayName);
-    this.#monitoring.startCollection();
     this.#onStatusChanged();
     return this.getSnapshot();
   }
 
   applyAttendanceAction(action: AttendanceAction): FoundationSnapshot {
-    this.#attendanceService.apply(action);
+    const attendanceState = this.#attendanceService.apply(action);
+    if (attendanceState === "working" && this.#database.getMonitoringEnabled()) {
+      this.#monitoring.startCollection();
+    } else {
+      this.#monitoring.stopCollection();
+    }
     this.#onStatusChanged();
     return this.getSnapshot();
   }
@@ -171,6 +179,12 @@ export class AppRuntime {
     if (process.platform !== "win32") throw new Error("Windows startup settings are only available on Windows.");
     app.setLoginItemSettings({ openAtLogin: enabled });
     this.#database.setAutoStartEnabled(enabled);
+    this.#onStatusChanged();
+    return this.getSnapshot();
+  }
+
+  setSelectedApplications(applications: readonly SelectedApplication[]): FoundationSnapshot {
+    this.#database.saveSelectedApplications(applications);
     this.#onStatusChanged();
     return this.getSnapshot();
   }

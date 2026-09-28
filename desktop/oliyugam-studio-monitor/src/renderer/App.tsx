@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { AttendanceState, FoundationSnapshot } from "../../shared/contracts.js";
+import type { AttendanceState, FoundationSnapshot, SelectedApplication } from "../../shared/contracts.js";
 
 type LoadState = "loading" | "ready" | "error";
 type AttendanceAction = "clock-in" | "clock-out" | "break-start" | "break-end";
@@ -105,6 +105,12 @@ export function App() {
         void runMutation(
           () => window.studioMonitor.setAutoStartEnabled(enabled),
           "We couldn't update the startup preference. Please try again.",
+        )
+      }
+      onSelectedApplications={(applications) =>
+        void runMutation(
+          () => window.studioMonitor.setSelectedApplications(applications),
+          "We couldn't save the selected applications. Please try again.",
         )
       }
       onSignOut={() =>
@@ -216,6 +222,7 @@ interface DashboardProps {
   onAttendance: (action: AttendanceAction) => void;
   onMonitoring: (enabled: boolean) => void;
   onAutoStart: (enabled: boolean) => void;
+  onSelectedApplications: (applications: readonly SelectedApplication[]) => void;
   onSignOut: () => void;
 }
 
@@ -227,6 +234,7 @@ function Dashboard({
   onAttendance,
   onMonitoring,
   onAutoStart,
+  onSelectedApplications,
   onSignOut,
 }: DashboardProps) {
   const employee = snapshot.employee;
@@ -411,6 +419,12 @@ function Dashboard({
             </button>
           </div>
         </section>
+
+        <SelectedApplicationsPanel
+          applications={snapshot.selectedApplications}
+          pending={pending}
+          onChange={onSelectedApplications}
+        />
 
         <footer className="footer-bar">
           <p className="privacy-line">
@@ -611,4 +625,77 @@ function formatDateTime(value: string | null) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function SelectedApplicationsPanel({
+  applications,
+  pending,
+  onChange,
+}: {
+  applications: readonly SelectedApplication[];
+  pending: boolean;
+  onChange: (applications: readonly SelectedApplication[]) => void;
+}) {
+  const [displayName, setDisplayName] = useState("");
+  const [executableName, setExecutableName] = useState("");
+  const [validationError, setValidationError] = useState("");
+
+  function addApplication(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const display = displayName.trim();
+    const executable = executableName.trim().toLowerCase();
+    if (!display || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}\.exe$/iu.test(executable)) {
+      setValidationError("Enter a display name and an executable ending in .exe.");
+      return;
+    }
+    const id = executable.replace(/\.exe$/iu, "").replace(/[^a-z0-9]+/giu, "-").replace(/^-+|-+$/gu, "").toLowerCase();
+    if (!id || applications.some((application) => application.id === id || application.executableName.toLowerCase() === executable)) {
+      setValidationError("This application is already in the selected list.");
+      return;
+    }
+    onChange([...applications, {
+      id,
+      displayName: display,
+      executableName: executable,
+      enabled: true,
+      supportLevel: "basic",
+      connectorId: null,
+    }]);
+    setDisplayName("");
+    setExecutableName("");
+    setValidationError("");
+  }
+
+  return (
+    <section className="panel selected-applications-panel" aria-labelledby="selected-applications-heading">
+      <div>
+        <p className="section-label">Work applications</p>
+        <h2 className="panel-title" id="selected-applications-heading">Selected software</h2>
+        <p className="selection-copy">Only enabled applications in this list are recorded as work-application usage. Other processes are ignored.</p>
+      </div>
+      <form className="application-form" onSubmit={addApplication}>
+        <input className="text-input" aria-label="Application display name" placeholder="Application name" value={displayName} disabled={pending} onChange={(event) => setDisplayName(event.target.value)} />
+        <input className="text-input" aria-label="Application executable name" placeholder="for example, blender.exe" value={executableName} disabled={pending} onChange={(event) => setExecutableName(event.target.value)} />
+        <button className="action-button" type="submit" disabled={pending}>Add application</button>
+      </form>
+      {validationError && <p className="form-hint" role="alert">{validationError}</p>}
+      {applications.length === 0 ? <p className="selection-empty">No work applications selected yet.</p> : (
+        <ul className="application-list" aria-label="Selected work applications">
+          {applications.map((application) => (
+            <li key={application.id}>
+              <div>
+                <strong>{application.displayName}</strong>
+                <span>{application.executableName} · {application.supportLevel === "enhanced" ? "Verified integration" : "Foreground usage"}</span>
+              </div>
+              <div className="application-actions">
+                <button className="text-button" type="button" disabled={pending} onClick={() => onChange(applications.map((item) => item.id === application.id ? { ...item, enabled: !item.enabled } : item))}>{application.enabled ? "Disable" : "Enable"}</button>
+                <button className="text-button" type="button" disabled={pending} onClick={() => onChange(applications.filter((item) => item.id !== application.id))}>Remove</button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="selection-copy">Software-specific work states, such as rendering or exporting, appear only when a verified connector is installed for that software.</p>
+    </section>
+  );
 }

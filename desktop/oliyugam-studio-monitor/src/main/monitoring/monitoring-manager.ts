@@ -45,7 +45,13 @@ export class MonitoringManager implements BackgroundService {
     this.#getDevice = options.getDevice;
     this.#isMonitoringEnabled = options.isMonitoringEnabled;
     this.#onStatusChanged = options.onStatusChanged;
-    this.#applicationTracker = new ApplicationTracker(options.database, options.logger);
+    this.#applicationTracker = new ApplicationTracker(
+      options.database,
+      options.logger,
+      (executableName) => options.database.getSelectedApplications().find(
+        (application) => application.executableName.toLowerCase() === executableName.toLowerCase(),
+      ) ?? null,
+    );
   }
 
   get state(): "active" | "paused" | "not-started" | "unsupported" {
@@ -68,7 +74,11 @@ export class MonitoringManager implements BackgroundService {
 
   startCollection(): void {
     this.#requested = true;
-    if (!this.#started || process.platform !== "win32" || !this.#isEnrolled() || this.#collecting) {
+    if (!this.#started
+      || process.platform !== "win32"
+      || !this.#isEnrolled()
+      || !this.#isMonitoringEnabled()
+      || this.#collecting) {
       return;
     }
     this.#collecting = true;
@@ -101,7 +111,7 @@ export class MonitoringManager implements BackgroundService {
   }
 
   async handleResume(): Promise<void> {
-    if (!this.#requested || !this.#started || !this.#isEnrolled()) return;
+    if (!this.#requested || !this.#started || !this.#isEnrolled() || !this.#isMonitoringEnabled()) return;
     this.startCollection();
     await Promise.all([this.#sampleSession(), this.#sampleSystemHealth(), this.#runHeartbeat(), this.#runSync()]);
   }

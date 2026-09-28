@@ -10,6 +10,12 @@ The default API mode is **local demo**. Demo setup accepts a display name, recor
 
 Monitoring is off after setup and must be enabled from the dashboard. Monitoring and system sampling are Windows-only; on other platforms the dashboard reports that monitoring is unavailable.
 
+## Selected work applications
+
+The dashboard keeps a local list of selected work applications. Only an enabled executable from that list can create an application-usage record; other foreground processes are ignored. Add the executable name exactly as Windows reports it, for example `blender.exe`.
+
+The current build provides foreground-usage support for selected applications. Software-specific states such as rendering, exporting, or encoding require a verified connector for the relevant product and version. The connector contract is present, but no product connector is installed in this build, so the dashboard does not claim those states.
+
 ## Technology and layout
 
 - Electron 44, Node.js 24, TypeScript 5.9 strict mode

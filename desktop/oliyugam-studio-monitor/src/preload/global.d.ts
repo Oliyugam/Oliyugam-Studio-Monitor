@@ -1,4 +1,4 @@
-import type { AttendanceAction, FoundationSnapshot, MonitoringStatusListener } from "../../shared/contracts.js";
+import type { AttendanceAction, FoundationSnapshot, MonitoringStatusListener, SelectedApplication } from "../../shared/contracts.js";
 
 declare global {
   interface Window {
@@ -8,6 +8,7 @@ declare global {
       applyAttendanceAction(action: AttendanceAction): Promise<FoundationSnapshot>;
       setMonitoringEnabled(enabled: boolean): Promise<FoundationSnapshot>;
       setAutoStartEnabled(enabled: boolean): Promise<FoundationSnapshot>;
+      setSelectedApplications(applications: readonly SelectedApplication[]): Promise<FoundationSnapshot>;
       signOut(): Promise<FoundationSnapshot>;
       onStatusChanged(listener: MonitoringStatusListener): () => void;
     };

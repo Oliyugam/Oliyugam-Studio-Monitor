@@ -44,6 +44,25 @@ export interface AppUsageEvent {
   durationSeconds: number;
 }
 
+export type SoftwareSupportLevel = "basic" | "enhanced";
+
+/** A locally approved executable. Unlisted processes are never recorded as app usage. */
+export interface SelectedApplication {
+  id: string;
+  displayName: string;
+  executableName: string;
+  enabled: boolean;
+  supportLevel: SoftwareSupportLevel;
+  connectorId: string | null;
+}
+
+/** State reported by a verified, software-specific connector. */
+export interface SoftwareWorkState {
+  applicationId: string;
+  state: "idle" | "working" | "rendering" | "exporting" | "unavailable";
+  observedAt: string;
+}
+
 export interface SystemMetrics {
   sampledAt: string;
   cpuPercent: number;
@@ -102,6 +121,7 @@ export interface FoundationSnapshot {
   monitoringState: MonitoringState;
   attendanceState: AttendanceState;
   currentApplication: string | null;
+  selectedApplications: readonly SelectedApplication[];
   metrics: SystemMetrics | null;
   pendingSyncCount: number;
   failedSyncCount: number;

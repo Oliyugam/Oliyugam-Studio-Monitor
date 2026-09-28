@@ -24,5 +24,6 @@ const applicationCategories: ReadonlyMap<string, ApplicationCategory> = new Map(
 ]);
 
 export function classifyApplication(processName: string): ApplicationCategory {
-  return applicationCategories.get(processName.toLowerCase()) ?? "OTHER";
+  const normalized = processName.toLowerCase().replace(/\.exe$/u, "");
+  return applicationCategories.get(normalized) ?? "OTHER";
 }

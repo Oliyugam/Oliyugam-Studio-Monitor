@@ -441,6 +441,57 @@ h1 {
   padding: 18px 20px;
 }
 
+.selected-applications-panel {
+  margin-top: 16px;
+  padding: 20px 22px;
+}
+
+.selection-copy,
+.selection-empty {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.application-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 9px;
+  margin-top: 16px;
+}
+
+.application-form .action-button {
+  padding: 0 14px;
+}
+
+.application-list {
+  display: grid;
+  gap: 0;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid #edf1ed;
+}
+
+.application-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 12px 0;
+  border-bottom: 1px solid #edf1ed;
+}
+
+.application-list strong,
+.application-list span {
+  display: block;
+}
+
+.application-list strong { font-size: 11px; }
+.application-list span { margin-top: 3px; color: var(--ink-faint); font-size: 10px; }
+.application-actions { display: flex; gap: 4px; }
+
 .monitor-row {
   display: flex;
   align-items: center;
@@ -927,6 +978,8 @@ h1 {
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto;
   }
+
+  .application-form { grid-template-columns: 1fr; }
 
   .metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

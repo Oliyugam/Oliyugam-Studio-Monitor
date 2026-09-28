@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ActivityEvent, AppUsageEvent } from "../../../shared/contracts.js";
+import type { ActivityEvent, AppUsageEvent, SelectedApplication } from "../../../shared/contracts.js";
 import { classifyApplication } from "../../../config/application-classification.js";
 import type { LocalDatabase } from "../database/local-database.js";
 import type { StructuredLogger } from "../logging/structured-logger.js";
@@ -12,7 +12,11 @@ export class ApplicationTracker {
   #currentApplication: string | null = null;
   #applicationStartedAt: number | null = null;
 
-  constructor(database: LocalDatabase, logger: StructuredLogger) {
+  constructor(
+    database: LocalDatabase,
+    logger: StructuredLogger,
+    private readonly getSelectedApplication: (executableName: string) => SelectedApplication | null,
+  ) {
     this.#database = database;
     this.#logger = logger;
   }
@@ -28,7 +32,9 @@ export class ApplicationTracker {
       this.#lastActivityAt = sampledAt;
     }
 
-    const nextApplication = state === "active" ? normalizeProcessName(processName) : null;
+    const executableName = state === "active" ? normalizeProcessName(processName) : null;
+    const selectedApplication = executableName ? this.getSelectedApplication(executableName) : null;
+    const nextApplication = selectedApplication?.enabled ? selectedApplication.id : null;
     if (nextApplication === this.#currentApplication) return;
 
     this.#flushCurrentApplication(sampledAt);
@@ -90,6 +96,6 @@ export class ApplicationTracker {
 }
 
 function normalizeProcessName(value: string | null): string | null {
-  if (!value || !/^[\w.-]{1,128}$/u.test(value)) return null;
+  if (!value || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/u.test(value)) return null;
   return value.toLowerCase();
 }

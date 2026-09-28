@@ -10,6 +10,7 @@ import type {
   Device,
   Employee,
   Heartbeat,
+  SelectedApplication,
   SyncQueueItem,
   SystemMetrics,
 } from "../../../shared/contracts.js";
@@ -105,6 +106,15 @@ export class LocalDatabase {
 
   setMonitoringEnabled(enabled: boolean): void {
     this.#setConfig("monitoring-enabled", enabled);
+  }
+
+  getSelectedApplications(): SelectedApplication[] {
+    const applications = this.#getConfig<SelectedApplication[]>("selected-applications", []);
+    return applications.filter(isSelectedApplication);
+  }
+
+  saveSelectedApplications(applications: readonly SelectedApplication[]): void {
+    this.#setConfig("selected-applications", applications);
   }
 
   saveEncryptedCredential(key: string, ciphertextBase64: string): void {
@@ -475,4 +485,15 @@ function localDateKey(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function isSelectedApplication(value: unknown): value is SelectedApplication {
+  if (!value || typeof value !== "object") return false;
+  const application = value as Partial<SelectedApplication>;
+  return typeof application.id === "string"
+    && typeof application.displayName === "string"
+    && typeof application.executableName === "string"
+    && typeof application.enabled === "boolean"
+    && (application.supportLevel === "basic" || application.supportLevel === "enhanced")
+    && (typeof application.connectorId === "string" || application.connectorId === null);
 }
